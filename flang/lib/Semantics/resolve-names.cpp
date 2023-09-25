@@ -2391,6 +2391,12 @@ Symbol &ScopeHandler::MakeHostAssocSymbol(
   // on the host-associated name, at most once (C815).
   symbol.implicitAttrs() =
       symbol.attrs() & Attrs{Attr::ASYNCHRONOUS, Attr::VOLATILE};
+  // SAVE statement in the inner scope will create a new symbol.
+  // If the host variable is used via host association,
+  // we have to propagate whether SAVE is implicit in the host scope.
+  // Otherwise, verifications that do not allow explicit SAVE
+  // attribute would fail.
+  symbol.implicitAttrs() |= hostSymbol.implicitAttrs() & Attrs{Attr::SAVE};
   symbol.flags() = hostSymbol.flags();
   return symbol;
 }
@@ -5189,7 +5195,6 @@ bool DeclarationVisitor::Pre(const parser::DerivedTypeDef &x) {
   CHECK(scope.symbol());
   CHECK(scope.symbol()->scope() == &scope);
   auto &details{scope.symbol()->get<DerivedTypeDetails>()};
-  details.set_isForwardReferenced(false);
   std::set<SourceName> paramNames;
   for (auto &paramName : std::get<std::list<parser::Name>>(stmt.statement.t)) {
     details.add_paramName(paramName.source);
@@ -5242,6 +5247,7 @@ bool DeclarationVisitor::Pre(const parser::DerivedTypeDef &x) {
   }
   Walk(std::get<std::optional<parser::TypeBoundProcedurePart>>(x.t));
   Walk(std::get<parser::Statement<parser::EndTypeStmt>>(x.t));
+  details.set_isForwardReferenced(false);
   derivedTypeInfo_ = {};
   PopScope();
   return false;
@@ -5257,7 +5263,13 @@ void DeclarationVisitor::Post(const parser::DerivedTypeStmt &x) {
   auto *extendsName{derivedTypeInfo_.extends};
   std::optional<DerivedTypeSpec> extendsType{
       ResolveExtendsType(name, extendsName)};
-  auto &symbol{MakeSymbol(name, GetAttrs(), DerivedTypeDetails{})};
+  DerivedTypeDetails derivedTypeDetails;
+  if (Symbol *typeSymbol{FindInScope(currScope(), name)}; typeSymbol &&
+      typeSymbol->has<DerivedTypeDetails>() &&
+      typeSymbol->get<DerivedTypeDetails>().isForwardReferenced()) {
+    derivedTypeDetails.set_isForwardReferenced(true);
+  }
+  auto &symbol{MakeSymbol(name, GetAttrs(), std::move(derivedTypeDetails))};
   symbol.ReplaceName(name.source);
   derivedTypeInfo_.type = &symbol;
   PushScope(Scope::Kind::DerivedType, &symbol);

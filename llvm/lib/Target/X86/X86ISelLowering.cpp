@@ -22445,6 +22445,24 @@ bool X86TargetLowering::isXAndYEqZeroPreferableToXAndYEqY(ISD::CondCode Cond,
   return !VT.isVector() || Cond != ISD::CondCode::SETEQ;
 }
 
+bool X86TargetLowering::optimizeFMulOrFDivAsShiftAddBitcast(
+    SDNode *N, SDValue, SDValue IntPow2) const {
+  if (N->getOpcode() == ISD::FDIV)
+    return true;
+
+  EVT FPVT = N->getValueType(0);
+  EVT IntVT = IntPow2.getValueType();
+
+  // This indicates a non-free bitcast.
+  // TODO: This is probably overly conservative as we will need to scale the
+  // integer vector anyways for the int->fp cast.
+  if (FPVT.isVector() &&
+      FPVT.getScalarSizeInBits() != IntVT.getScalarSizeInBits())
+    return false;
+
+  return true;
+}
+
 /// Check if replacement of SQRT with RSQRT should be disabled.
 bool X86TargetLowering::isFsqrtCheap(SDValue Op, SelectionDAG &DAG) const {
   EVT VT = Op.getValueType();
@@ -54203,7 +54221,7 @@ static SDValue combineSubSetcc(SDNode *N, SelectionDAG &DAG) {
     SDValue SetCC = Op1.getOperand(0);
     X86::CondCode CC = (X86::CondCode)SetCC.getConstantOperandVal(0);
     X86::CondCode NewCC = X86::GetOppositeBranchCondition(CC);
-    uint64_t NewImm = Op0C->getZExtValue() - 1;
+    APInt NewImm = Op0C->getAPIntValue() - 1;
     SDLoc DL(Op1);
     SDValue NewSetCC = getSETCC(NewCC, SetCC.getOperand(1), DL, DAG);
     NewSetCC = DAG.getNode(ISD::ZERO_EXTEND, DL, VT, NewSetCC);
@@ -56551,13 +56569,14 @@ SDValue X86TargetLowering::LowerAsmOutputForConstraint(
 /// Lower the specified operand into the Ops vector.
 /// If it is invalid, don't add anything to Ops.
 void X86TargetLowering::LowerAsmOperandForConstraint(SDValue Op,
-                                                     std::string &Constraint,
-                                                     std::vector<SDValue>&Ops,
+                                                     StringRef Constraint,
+                                                     std::vector<SDValue> &Ops,
                                                      SelectionDAG &DAG) const {
   SDValue Result;
 
   // Only support length 1 constraints for now.
-  if (Constraint.length() > 1) return;
+  if (Constraint.size() > 1)
+    return;
 
   char ConstraintLetter = Constraint[0];
   switch (ConstraintLetter) {
