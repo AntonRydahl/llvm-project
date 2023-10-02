@@ -90,7 +90,13 @@ _LIBCPP_HIDE_FROM_ABI _Iterator __omp_parallel_for_simd_1(
 
 template <class _Iterator, class _DifferenceType, class _Function>
 _LIBCPP_HIDE_FROM_ABI _Iterator __parallel_for_simd_1(_Iterator __first, _DifferenceType __n, _Function __f) noexcept {
-  __omp_parallel_for_simd_1(__omp_gpu_backend::__omp_extract_base_ptr(__first), __n, __f);
+  if constexpr (std::is_reference_v<decltype(__first[0])>) {
+    __omp_parallel_for_simd_1(__omp_gpu_backend::__omp_extract_base_ptr(__first), __n, __f);
+  } else {
+#  pragma omp target teams distribute parallel for simd /* device(__device) */
+    for (_DifferenceType __i = 0; __i < __n; ++__i)
+      __f(*(__first + __i));
+  }
   return __first + __n;
 }
 
@@ -99,11 +105,14 @@ _LIBCPP_HIDE_FROM_ABI _Iterator __parallel_for_simd_1(_Iterator __first, _Differ
 template <class _Index, class _DifferenceType, class _Tp>
 _LIBCPP_HIDE_FROM_ABI _Index __omp_parallel_for_simd_val_1(
     _Index __first, _DifferenceType __n, const _Tp& __value, [[maybe_unused]] const int __device = 0) noexcept {
+  if constexpr (std::is_reference_v<decltype(__first[0])>) {
 #  pragma omp target teams distribute parallel for simd map(from : __first[0 : __n]) map(always, to : __value)         \
       device(__device)
-  for (_DifferenceType __i = 0; __i < __n; ++__i)
-    __first[__i] = __value;
-
+    for (_DifferenceType __i = 0; __i < __n; ++__i)
+      __first[__i] = __value;
+  } else {
+    static_assert(false, "Cannot offload iterators not backed by a pointer");
+  }
   return __first + __n;
 }
 
@@ -147,11 +156,55 @@ _LIBCPP_HIDE_FROM_ABI _Iterator1 __omp_parallel_for_simd_2(
 template <class _Iterator1, class _DifferenceType, class _Iterator2, class _Function>
 _LIBCPP_HIDE_FROM_ABI _Iterator1
 __parallel_for_simd_2(_Iterator1 __first1, _DifferenceType __n, _Iterator2 __first2, _Function __f) noexcept {
-  __omp_parallel_for_simd_2(
-      __omp_gpu_backend::__omp_extract_base_ptr(__first1),
-      __n,
-      __omp_gpu_backend::__omp_extract_base_ptr(__first2),
-      __f);
+  // The second iterator must be backed by a pointer as we're writing to it
+  static_assert(std::is_reference_v<decltype(__first2[0])>, "Destination iterator is read only");
+  if constexpr (std::is_reference_v<decltype(__first1[0])>) {
+    __omp_parallel_for_simd_2(
+        __omp_gpu_backend::__omp_extract_base_ptr(__first1),
+        __n,
+        __omp_gpu_backend::__omp_extract_base_ptr(__first2),
+        __f);
+  } else {
+    // XXX first1 iterator is counting, first1 and first2 will be different here
+#  pragma omp target teams distribute parallel for simd /* device(__device) */
+    for (_DifferenceType __i = 0; __i < __n; ++__i)
+      *(__first2 + __i) = __f(*(__first1 + __i));
+  }
+  return __first1 + __n;
+}
+
+extern "C" int omp_target_memcpy(
+    void* dst,
+    const void* src,
+    size_t length,
+    size_t dst_offset,
+    size_t src_offset,
+    int dst_device_num,
+    int src_device_num);
+
+template <class _Iterator1, class _DifferenceType, class _Iterator2>
+_LIBCPP_HIDE_FROM_ABI _Iterator1
+__parallel_for_simd_2(_Iterator1 __first1, _DifferenceType __n, _Iterator2 __first2) noexcept {
+  // The second iterator must be backed by a pointer as we're writing to it
+  static_assert(std::is_reference_v<decltype(__first2[0])>, "Destination iterator is read only");
+  if constexpr (std::is_reference_v<decltype(__first1[0])>) {
+    // Host and dest are both pointers,
+    int r = omp_target_memcpy(
+        __omp_gpu_backend::__omp_extract_base_ptr(__first2),
+        __omp_gpu_backend::__omp_extract_base_ptr(__first1),
+        __n * sizeof(typename std::iterator_traits<_Iterator1>::value_type),
+        0,
+        0,
+        0,
+        0);
+    if (r != 0)
+      std::abort();
+  } else {
+    // XXX first1 iterator is counting, first1 and first2 will be different here
+#  pragma omp target teams distribute parallel for simd /* device(__device) */
+    for (_DifferenceType __i = 0; __i < __n; ++__i)
+      *(__first2 + __i) = *(__first1 + __i);
+  }
   return __first1 + __n;
 }
 
@@ -236,7 +289,7 @@ _PSTL_PRAGMA(omp target teams distribute parallel for simd reduction(omp_op:__in
       return __init;                                                                                                                  \
     }
 
-#  define __PSTL_OMP_SIMD_2_REDUCTION(omp_op, std_op)                                                                                                     \
+#  define __PSTL_OMP_SIMD_2_REDUCTION(omp_op, std_op)                                                                                                  \
     template <class _Iterator1,                                                                                                                      \
               class _Iterator2,                                                                                                                      \
               class _DifferenceType,                                                                                                                 \
@@ -250,11 +303,11 @@ _PSTL_PRAGMA(omp target teams distribute parallel for simd reduction(omp_op:__in
         _Tp __init,                                                                                                                                  \
         std_op<_BinaryOperationType> __reduce,                                                                                                       \
         _UnaryOperation __transform/*,                                                                                                                 \
-        [[maybe_unused]] const int __device = 0*/) noexcept {    \
-_PSTL_PRAGMA(omp target teams distribute parallel for simd reduction(omp_op:__init) map(to : __first1[0 : __n], __first2[0 : __n]))/* device(__device))*/ \
-      for (_DifferenceType __i = 0; __i < __n; ++__i)                                                                                                     \
-        __init = __reduce(__init, __transform(__first1[__i], __first2[__i]));                                                                             \
-      return __init;                                                                                                                                      \
+        [[maybe_unused]] const int __device = 0*/) noexcept { \
+_PSTL_PRAGMA(omp target teams distribute parallel for simd reduction(omp_op:__init)  )/* device(__device))*/                                           \
+      for (_DifferenceType __i = 0; __i < __n; ++__i)                                                                                                  \
+        __init = __reduce(__init, __transform(__first1[__i], __first2[__i]));                                                                          \
+      return __init;                                                                                                                                   \
     }
 
 #  define __PSTL_OMP_SIMD_REDUCTION(omp_op, std_op)                                                                    \
@@ -287,6 +340,57 @@ __PSTL_OMP_SIMD_REDUCTION(^, std::bit_xor)
 
 // Extracting the underlying pointers
 
+template <class F, class... Ts>
+auto __lift_fn(Ts&&... xs) {
+#  if __cplusplus >= 202002L
+  return F{}(std::forward<Ts>(xs)...);
+#  else
+  static_assert(std::is_empty<F>(), "Can't lift lambda with captures");
+  return (*reinterpret_cast<const F*>(0))(std::forward<Ts>(xs)...);
+#  endif
+}
+
+template <class _Iterator, class _DifferenceType, typename _Tp, typename _BinaryOperation, typename _UnaryOperation>
+_Tp __transform_reduce0(
+    _Iterator __first,
+    _DifferenceType __n,
+    _Tp __init,
+    _BinaryOperation __reduce,
+    _UnaryOperation __transform,
+    [[maybe_unused]] const int __device = 0) noexcept {
+  struct alignas(16)
+      __reducer { // TODO switch __lift_fn for the 0-length base: struct __reducer : _BinaryOperation {...}
+    _Tp value;
+    bool init = false;
+    __reducer operator+(__reducer that) const {
+      return (init && that.init) ? __reducer{__lift_fn<_BinaryOperation>(value, that.value), true}
+                                 : (init ? *this : that);
+    }
+
+    //    __reducer& operator+=(__reducer &that) {
+    //      value = (init && that.init) ?  __lift_fn<_BinaryOperation>(value, that.value): (init ? value : that.value);
+    //      init = (init && that.init) ?  true: (init ? init : that.init);
+    //      return *this;
+    //    }
+  };
+
+  auto __result0 = __reducer{__init};
+#  pragma omp target teams distribute parallel for simd reduction(+ : __result0)                                       \
+      map(to : __first, __transform, __reduce) /*device(__device))*/
+  for (decltype(__n) __i = 0; __i < __n; __i += 2) {
+    __result0.init = true;
+    __result0.value =
+        __i + 1 >= __n //
+            ? __transform(*(__first + __i))
+            : __lift_fn<_BinaryOperation>(__transform(*(__first + __i)), __transform(*(__first + (__i + 1))));
+  }
+  //  for (decltype(__n) __i = 0; __i < __n; ++__i) {
+  //    __result0 = __result0 + __reducer{__transform(*(__first + __i)), true};
+  //  }
+  //
+  return __result0.value;
+}
+
 template <class _Iterator, class _DifferenceType, typename _Tp, typename _BinaryOperation, typename _UnaryOperation >
 _LIBCPP_HIDE_FROM_ABI _Tp __parallel_for_simd_reduction_1(
     _Iterator __first,
@@ -295,8 +399,17 @@ _LIBCPP_HIDE_FROM_ABI _Tp __parallel_for_simd_reduction_1(
     _BinaryOperation __reduce,
     _UnaryOperation __transform,
     [[maybe_unused]] const int __device = 0) noexcept {
-  return __omp_parallel_for_simd_reduction_1(
-      __omp_gpu_backend::__omp_extract_base_ptr(__first), __n, __init, __reduce, __transform);
+  if constexpr (std::is_reference_v<decltype(__first[0])>) {
+    return __omp_parallel_for_simd_reduction_1(
+        __omp_gpu_backend::__omp_extract_base_ptr(__first), __n, __init, __reduce, __transform);
+  } else {
+    //    _PSTL_PRAGMA(omp target teams distribute parallel for simd reduction(+:__init) map(to : __first ))
+    //    /*device(__device))*/ for (_DifferenceType __i = 0; __i < __n; ++__i)
+    //      __init = __reduce(__init, __transform(__first[__i]));
+    //    return __init;
+
+    return __transform_reduce0(__first, __n, __init, __reduce, __transform);
+  }
 }
 
 template <class _Iterator1,

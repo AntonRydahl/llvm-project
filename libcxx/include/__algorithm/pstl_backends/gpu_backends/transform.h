@@ -37,12 +37,14 @@ _LIBCPP_HIDE_FROM_ABI _ForwardOutIterator __pstl_transform(
     _UnaryOperation __op) {
   if constexpr (__is_unsequenced_execution_policy_v<_ExecutionPolicy> &&
                 __has_random_access_iterator_category_or_concept<_ForwardIterator>::value &&
-                __has_random_access_iterator_category_or_concept<_ForwardOutIterator>::value &&
-                __libcpp_is_contiguous_iterator<_ForwardIterator>::value &&
-                __libcpp_is_contiguous_iterator<_ForwardOutIterator>::value) {
+                __has_random_access_iterator_category_or_concept<_ForwardOutIterator>::value
+//                __libcpp_is_contiguous_iterator<_ForwardIterator>::value &&
+//                __libcpp_is_contiguous_iterator<_ForwardOutIterator>::value
+                ) {
     std::__par_backend::__parallel_for_simd_2(__first, __last - __first, __result, __op);
     return __result + (__last - __first);
   }
+  std::abort();
   // If it is not safe to offload to the GPU, we rely on the CPU backend.
   return std::__pstl_transform<_ExecutionPolicy>(__cpu_backend_tag{}, __first, __last, __result, __op);
 }
@@ -71,6 +73,7 @@ _LIBCPP_HIDE_FROM_ABI _ForwardOutIterator __pstl_transform(
     return __result + (__last1 - __first1);
   }
   // If it is not safe to offload to the GPU, we rely on the CPU backend.
+  std::abort();
   return std::__pstl_transform<_ExecutionPolicy>(__cpu_backend_tag{}, __first1, __last1, __first2, __result, __op);
 }
 

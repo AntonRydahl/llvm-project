@@ -33,12 +33,14 @@ __pstl_for_each(__gpu_backend_tag, _ForwardIterator __first, _ForwardIterator __
   // parallel unsequenced, as it is the only execution policy prohibiting throwing
   // exceptions and allowing SIMD instructions
   if constexpr (__is_unsequenced_execution_policy_v<_ExecutionPolicy> &&
-                __has_random_access_iterator_category_or_concept<_ForwardIterator>::value &&
-                __libcpp_is_contiguous_iterator<_ForwardIterator>::value) {
+                __has_random_access_iterator_category_or_concept<_ForwardIterator>::value
+//                __libcpp_is_contiguous_iterator<_ForwardIterator>::value
+                ) {
     std::__par_backend::__parallel_for_simd_1(__first, __last - __first, __func);
   }
   // Else we fall back to the GPU backend
   else {
+    std::abort();
     std::__pstl_for_each<_ExecutionPolicy>(__cpu_backend_tag{}, __first, __last, __func);
   }
 }

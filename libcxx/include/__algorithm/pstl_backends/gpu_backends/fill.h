@@ -40,6 +40,7 @@ __pstl_fill(__gpu_backend_tag, _ForwardIterator __first, _ForwardIterator __last
   }
   // Otherwise, we execute fill on the CPU instead
   else {
+    std::abort();
     std::__pstl_fill<_ExecutionPolicy>(__cpu_backend_tag{}, __first, __last, __value);
   }
 }

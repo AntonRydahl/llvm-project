@@ -89,6 +89,7 @@ set(files
   __algorithm/pstl_backends/gpu_backends/any_of.h
   __algorithm/pstl_backends/gpu_backends/backend.h
   __algorithm/pstl_backends/gpu_backends/fill.h
+  __algorithm/pstl_backends/gpu_backends/copy.h
   __algorithm/pstl_backends/gpu_backends/find_if.h
   __algorithm/pstl_backends/gpu_backends/for_each.h
   __algorithm/pstl_backends/gpu_backends/merge.h

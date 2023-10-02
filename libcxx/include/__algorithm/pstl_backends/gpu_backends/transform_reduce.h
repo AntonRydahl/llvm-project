@@ -22,7 +22,6 @@
 #include <__type_traits/operation_traits.h>
 #include <__utility/move.h>
 #include <__utility/terminate_on_exception.h>
-#include <new>
 
 #if !defined(_LIBCPP_HAS_NO_PRAGMA_SYSTEM_HEADER)
 #  pragma GCC system_header
@@ -72,13 +71,16 @@ _LIBCPP_HIDE_FROM_ABI _Tp __pstl_transform_reduce(
   if constexpr (__is_unsequenced_execution_policy_v<_ExecutionPolicy> &&
                 __has_random_access_iterator_category_or_concept<_ForwardIterator1>::value &&
                 __has_random_access_iterator_category_or_concept<_ForwardIterator2>::value &&
-                __libcpp_is_contiguous_iterator<_ForwardIterator1>::value &&
-                __libcpp_is_contiguous_iterator<_ForwardIterator2>::value && is_arithmetic_v<_Tp> &&
+//                __libcpp_is_contiguous_iterator<_ForwardIterator1>::value &&
+//                __libcpp_is_contiguous_iterator<_ForwardIterator2>::value &&
+//                is_arithmetic_v<_Tp> &&
                 (__is_trivial_plus_operation<_BinaryOperation1, _Tp, _Tp>::value ||
-                 __is_supported_reduction<_BinaryOperation1, _Tp, _Tp>::value)) {
+                 __is_supported_reduction<_BinaryOperation1, _Tp, _Tp>::value)
+                ) {
     return std::__par_backend::__parallel_for_simd_reduction_2(
         __first1, __first2, __last1 - __first1, __init, __reduce, __transform);
   }
+  std::abort();
   return std::__pstl_transform_reduce<_ExecutionPolicy>(
       __cpu_backend_tag{}, __first1, __last1, __first2, std::move(__init), __reduce, __transform);
 }
@@ -96,13 +98,16 @@ _LIBCPP_HIDE_FROM_ABI _Tp __pstl_transform_reduce(
     _BinaryOperation __reduce,
     _UnaryOperation __transform) {
   if constexpr (__is_unsequenced_execution_policy_v<_ExecutionPolicy> &&
-                __has_random_access_iterator_category_or_concept<_ForwardIterator>::value &&
-                __libcpp_is_contiguous_iterator<_ForwardIterator>::value && is_arithmetic_v<_Tp> &&
-                (__is_trivial_plus_operation<_BinaryOperation, _Tp, _Tp>::value ||
-                 __is_supported_reduction<_BinaryOperation, _Tp, _Tp>::value)) {
+                __has_random_access_iterator_category_or_concept<_ForwardIterator>::value
+//                __libcpp_is_contiguous_iterator<_ForwardIterator>::value &&
+//                is_arithmetic_v<_Tp> && true
+//                (__is_trivial_plus_operation<_BinaryOperation, _Tp, _Tp>::value ||
+//                 __is_supported_reduction<_BinaryOperation, _Tp, _Tp>::value)
+                ) {
     return std::__par_backend::__parallel_for_simd_reduction_1(
         __first, __last - __first, __init, __reduce, __transform);
   }
+  std::abort();
   return std::__pstl_transform_reduce<_ExecutionPolicy>(
       __cpu_backend_tag{}, __first, __last, std::move(__init), __reduce, __transform);
 }
