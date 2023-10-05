@@ -2296,7 +2296,7 @@ class VOPProfile <list<ValueType> _ArgVT, bit _EnableClamp = 0> {
   field RegisterClass Src1DPP = getVregSrcForVT<Src1VT>.ret;
   field RegisterClass Src2DPP = getVregSrcForVT<Src2VT>.ret;
   field RegisterOperand Src0VOP3DPP = VGPRSrc_32;
-  field RegisterOperand Src1VOP3DPP = VRegSrc_32;
+  field RegisterOperand Src1VOP3DPP = getVOP3DPPSrcForVT<Src1VT>.ret;
   field RegisterOperand Src2VOP3DPP = getVOP3DPPSrcForVT<Src2VT>.ret;
   field RegisterOperand Src0SDWA = getSDWASrcForVT<Src0VT>.ret;
   field RegisterOperand Src1SDWA = getSDWASrcForVT<Src0VT>.ret;
@@ -2471,15 +2471,24 @@ class VOPProfile_True16<VOPProfile P> : VOPProfile<P.ArgVT> {
   let IsTrue16 = 1;
   let IsRealTrue16 = 1;
   // Most DstVT are 16-bit, but not all.
-  let DstRC = getVALUDstForVT_fake16<DstVT>.ret;
+  let DstRC = getVALUDstForVT<DstVT, 1 /*IsTrue16*/, 0 /*IsVOP3Encoding*/>.ret;
   let DstRC64 = getVALUDstForVT<DstVT>.ret;
-  let Src1RC32 = RegisterOperand<getVregSrcForVT_t16<Src1VT>.ret>;
+  let Src0RC32 = getVOPSrc0ForVT<Src0VT, 1 /*IsTrue16*/, 0 /*IsFake16*/>.ret;
+  let Src1RC32 = getVregSrcForVT_t16<Src1VT, 0 /*IsFake16*/>.op;
   let Src0DPP = getVregSrcForVT_t16<Src0VT>.ret;
   let Src1DPP = getVregSrcForVT_t16<Src1VT>.ret;
   let Src2DPP = getVregSrcForVT_t16<Src2VT>.ret;
   let Src0ModDPP = getSrcModDPP_t16<Src0VT>.ret;
   let Src1ModDPP = getSrcModDPP_t16<Src1VT>.ret;
   let Src2ModDPP = getSrcModDPP_t16<Src2VT>.ret;
+
+  let DstRC64 = getVALUDstForVT<DstVT, 1 /*IsTrue16*/, 1 /*IsVOP3Encoding*/>.ret;
+  let Src0RC64 = getVOP3SrcForVT<Src0VT, 1 /*IsTrue16*/>.ret;
+  let Src1RC64 = getVOP3SrcForVT<Src1VT, 1 /*IsTrue16*/>.ret;
+  let Src2RC64 = getVOP3SrcForVT<Src2VT, 1 /*IsTrue16*/>.ret;
+  let Src0Mod = getSrcMod<Src0VT, 1 /*IsTrue16*/>.ret;
+  let Src1Mod = getSrcMod<Src1VT, 1 /*IsTrue16*/>.ret;
+  let Src2Mod = getSrcMod<Src2VT, 1 /*IsTrue16*/>.ret;
 }
 
 class VOPProfile_Fake16<VOPProfile P> : VOPProfile<P.ArgVT> {

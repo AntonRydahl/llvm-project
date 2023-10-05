@@ -3520,20 +3520,16 @@ static int32_t computeHeuristicUnrollFactor(CanonicalLoopInfo *CLI) {
     }
   }
 
-  unsigned NumInlineCandidates;
-  bool NotDuplicatable;
-  bool Convergent;
-  InstructionCost LoopSizeIC =
-      ApproximateLoopSize(L, NumInlineCandidates, NotDuplicatable, Convergent,
-                          TTI, EphValues, UP.BEInsns);
-  LLVM_DEBUG(dbgs() << "Estimated loop size is " << LoopSizeIC << "\n");
+  UnrollCostEstimator UCE(L, TTI, EphValues, UP.BEInsns);
 
   // Loop is not unrollable if the loop contains certain instructions.
-  if (NotDuplicatable || Convergent || !LoopSizeIC.isValid()) {
+  if (!UCE.canUnroll() || UCE.Convergent) {
     LLVM_DEBUG(dbgs() << "Loop not considered unrollable\n");
     return 1;
   }
-  unsigned LoopSize = *LoopSizeIC.getValue();
+
+  LLVM_DEBUG(dbgs() << "Estimated loop size is " << UCE.getRolledLoopSize()
+                    << "\n");
 
   // TODO: Determine trip count of \p CLI if constant, computeUnrollCount might
   // be able to use it.
@@ -3544,7 +3540,7 @@ static int32_t computeHeuristicUnrollFactor(CanonicalLoopInfo *CLI) {
 
   bool UseUpperBound = false;
   computeUnrollCount(L, TTI, DT, &LI, &AC, SE, EphValues, &ORE, TripCount,
-                     MaxTripCount, MaxOrZero, TripMultiple, LoopSize, UP, PP,
+                     MaxTripCount, MaxOrZero, TripMultiple, UCE, UP, PP,
                      UseUpperBound);
   unsigned Factor = UP.Count;
   LLVM_DEBUG(dbgs() << "Suggesting unroll factor of " << Factor << "\n");
@@ -6128,6 +6124,42 @@ OpenMPIRBuilder::getTargetEntryUniqueInfo(FileIdentifierInfoCallbackTy CallBack,
 
   return TargetRegionEntryInfo(ParentName, ID.getDevice(), ID.getFile(),
                                std::get<1>(FileIDInfo));
+}
+
+unsigned OpenMPIRBuilder::getFlagMemberOffset() {
+  unsigned Offset = 0;
+  for (uint64_t Remain =
+           static_cast<std::underlying_type_t<omp::OpenMPOffloadMappingFlags>>(
+               omp::OpenMPOffloadMappingFlags::OMP_MAP_MEMBER_OF);
+       !(Remain & 1); Remain = Remain >> 1)
+    Offset++;
+  return Offset;
+}
+
+omp::OpenMPOffloadMappingFlags
+OpenMPIRBuilder::getMemberOfFlag(unsigned Position) {
+  // Rotate by getFlagMemberOffset() bits.
+  return static_cast<omp::OpenMPOffloadMappingFlags>(((uint64_t)Position + 1)
+                                                     << getFlagMemberOffset());
+}
+
+void OpenMPIRBuilder::setCorrectMemberOfFlag(
+    omp::OpenMPOffloadMappingFlags &Flags,
+    omp::OpenMPOffloadMappingFlags MemberOfFlag) {
+  // If the entry is PTR_AND_OBJ but has not been marked with the special
+  // placeholder value 0xFFFF in the MEMBER_OF field, then it should not be
+  // marked as MEMBER_OF.
+  if (static_cast<std::underlying_type_t<omp::OpenMPOffloadMappingFlags>>(
+          Flags & omp::OpenMPOffloadMappingFlags::OMP_MAP_PTR_AND_OBJ) &&
+      static_cast<std::underlying_type_t<omp::OpenMPOffloadMappingFlags>>(
+          (Flags & omp::OpenMPOffloadMappingFlags::OMP_MAP_MEMBER_OF) !=
+          omp::OpenMPOffloadMappingFlags::OMP_MAP_MEMBER_OF))
+    return;
+
+  // Reset the placeholder value to prepare the flag for the assignment of the
+  // proper MEMBER_OF value.
+  Flags &= ~omp::OpenMPOffloadMappingFlags::OMP_MAP_MEMBER_OF;
+  Flags |= MemberOfFlag;
 }
 
 Constant *OpenMPIRBuilder::getAddrOfDeclareTargetVar(
