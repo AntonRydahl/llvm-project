@@ -179,9 +179,6 @@ implemented, all the algorithms will eventually forward to the basis algorithms 
 template <class _ExecutionPolicy>
 struct __select_backend;
 
-#  if defined(_LIBCPP_PSTL_CPU_BACKEND_SERIAL) || defined(_LIBCPP_PSTL_CPU_BACKEND_THREAD) ||                          \
-      defined(_LIBCPP_PSTL_CPU_BACKEND_LIBDISPATCH)
-
 template <>
 struct __select_backend<std::execution::sequenced_policy> {
   using type = __cpu_backend_tag;
@@ -194,6 +191,9 @@ struct __select_backend<std::execution::unsequenced_policy> {
 };
 #  endif
 
+#  if defined(_LIBCPP_PSTL_CPU_BACKEND_SERIAL) || defined(_LIBCPP_PSTL_CPU_BACKEND_THREAD) ||                          \
+      defined(_LIBCPP_PSTL_CPU_BACKEND_LIBDISPATCH)
+
 template <>
 struct __select_backend<std::execution::parallel_policy> {
   using type = __cpu_backend_tag;
@@ -205,18 +205,6 @@ struct __select_backend<std::execution::parallel_unsequenced_policy> {
 };
 
 #  elif defined(_LIBCPP_PSTL_BACKEND_OPENMP)
-
-template <>
-struct __select_backend<std::execution::sequenced_policy> {
-  using type = __omp_backend_tag;
-};
-
-#    if _LIBCPP_STD_VER >= 20
-template <>
-struct __select_backend<std::execution::unsequenced_policy> {
-  using type = __omp_backend_tag;
-};
-#    endif
 
 template <>
 struct __select_backend<std::execution::parallel_policy> {
