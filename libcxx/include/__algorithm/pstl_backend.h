@@ -208,7 +208,7 @@ struct __select_backend<std::execution::parallel_unsequenced_policy> {
 
 template <>
 struct __select_backend<std::execution::parallel_policy> {
-  using type = __omp_backend_tag;
+  using type = __cpu_backend_tag;
 };
 
 template <>
