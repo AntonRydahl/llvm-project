@@ -17,6 +17,7 @@
 #include <__type_traits/is_execution_policy.h>
 #include <__type_traits/remove_cvref.h>
 #include <__utility/move.h>
+#include <__utility/forward.h>
 #include <optional>
 
 #if !defined(_LIBCPP_HAS_NO_PRAGMA_SYSTEM_HEADER)
@@ -40,14 +41,14 @@ template <class _ExecutionPolicy,
   return std::__pstl_frontend_dispatch(
       _LIBCPP_PSTL_CUSTOMIZATION_POINT(__pstl_any_of, _RawPolicy),
       [&](_ForwardIterator __g_first, _ForwardIterator __g_last, _Predicate __g_pred) -> optional<bool> {
-        auto __res = std::__find_if(__policy, __g_first, __g_last, __g_pred);
+        auto __res = std::__find_if(__policy, std::move(__g_first), std::move(__g_last), std::move(__g_pred));
         if (!__res)
           return nullopt;
         return *__res != __g_last;
       },
-      std::move(__first),
-      std::move(__last),
-      std::move(__pred));
+      std::forward<_ForwardIterator>(__first),
+      std::forward<_ForwardIterator>(__last),
+      std::forward<_Predicate>(__pred));
 }
 
 template <class _ExecutionPolicy,
@@ -116,14 +117,14 @@ __none_of(_ExecutionPolicy&& __policy, _ForwardIterator&& __first, _ForwardItera
   return std::__pstl_frontend_dispatch(
       _LIBCPP_PSTL_CUSTOMIZATION_POINT(__pstl_none_of, _RawPolicy),
       [&](_ForwardIterator __g_first, _ForwardIterator __g_last, _Pred __g_pred) -> optional<bool> {
-        auto __res = std::__any_of(__policy, __g_first, __g_last, __g_pred);
+        auto __res = std::__any_of(__policy, std::move(__g_first), std::move(__g_last), std::move(__g_pred));
         if (!__res)
           return nullopt;
         return !*__res;
       },
-      std::move(__first),
-      std::move(__last),
-      std::move(__pred));
+      std::forward<_ForwardIterator>(__first),
+      std::forward<_ForwardIterator>(__last),
+      std::forward<_Pred>(__pred));
 }
 
 template <class _ExecutionPolicy,
