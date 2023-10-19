@@ -17,7 +17,7 @@
 #include "mlir/Dialect/LLVMIR/NVVMDialect.h"
 
 #include "mlir/Conversion/ConvertToLLVM/ToLLVMInterface.h"
-#include "mlir/Dialect/GPU/IR/GPUDialect.h"
+#include "mlir/Dialect/GPU/IR/CompilationInterfaces.h"
 #include "mlir/Dialect/Utils/StaticValueUtils.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinAttributes.h"
@@ -76,6 +76,12 @@ ParseResult VoteBallotOp::parse(OpAsmParser &parser, OperationState &result) {
 void VoteBallotOp::print(OpAsmPrinter &p) { printNVVMIntrinsicOp(p, *this); }
 
 LogicalResult CpAsyncBulkTensorGlobalToSharedClusterOp::verify() {
+  if (getCoordinates().size() > 5)
+    return emitError("Maximum 5 coordinates and dimension is supported.");
+  return success();
+}
+
+LogicalResult CpAsyncBulkTensorSharedCTAToGlobalOp::verify() {
   if (getCoordinates().size() > 5)
     return emitError("Maximum 5 coordinates and dimension is supported.");
   return success();
@@ -618,7 +624,8 @@ inferMMATypeFromMNK(NVVM::MMATypes type, NVVM::MMAFrag frag, int m, int n,
 LogicalResult NVVM::WMMALoadOp::verify() {
   unsigned addressSpace =
       llvm::cast<LLVM::LLVMPointerType>(getPtr().getType()).getAddressSpace();
-  if (addressSpace != 0 && addressSpace != 1 && addressSpace != 3)
+  if (addressSpace != 0 && addressSpace != NVVM::kGlobalMemorySpace &&
+      addressSpace != NVVM::kSharedMemorySpace)
     return emitOpError("expected source pointer in memory "
                        "space 0, 1, 3");
 
@@ -638,7 +645,8 @@ LogicalResult NVVM::WMMALoadOp::verify() {
 LogicalResult NVVM::WMMAStoreOp::verify() {
   unsigned addressSpace =
       llvm::cast<LLVM::LLVMPointerType>(getPtr().getType()).getAddressSpace();
-  if (addressSpace != 0 && addressSpace != 1 && addressSpace != 3)
+  if (addressSpace != 0 && addressSpace != NVVM::kGlobalMemorySpace &&
+      addressSpace != NVVM::kSharedMemorySpace)
     return emitOpError("expected operands to be a source pointer in memory "
                        "space 0, 1, 3");
 
@@ -690,7 +698,7 @@ LogicalResult NVVM::WMMAMmaOp::verify() {
 LogicalResult NVVM::LdMatrixOp::verify() {
   unsigned addressSpace =
       llvm::cast<LLVM::LLVMPointerType>(getPtr().getType()).getAddressSpace();
-  if (addressSpace != 3)
+  if (addressSpace != NVVM::kSharedMemorySpace)
     return emitOpError("expected source pointer in memory space 3");
 
   if (getNum() != 1 && getNum() != 2 && getNum() != 4)
@@ -903,7 +911,7 @@ std::string NVVM::WgmmaMmaAsyncOp::getPtx() {
   ss << "{\n"
         ".reg .pred p;\n"
         "setp.ne.b32 p, $"
-     << (expectedOutputRegisters + 2)
+     << ((expectedOutputRegisters * 2) + 2)
      << ", 0;\n"
         "wgmma.mma_async.sync.aligned.m"
      << m << "n" << n << "k" << k << "." << outputTypeName << "."

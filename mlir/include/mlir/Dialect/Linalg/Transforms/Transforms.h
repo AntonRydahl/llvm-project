@@ -299,12 +299,12 @@ struct LinalgPaddingOptions {
   }
   enum class CopyBackOp : int8_t {
     None = 0,
-    BufferizationCopyTensor = 1,
+    BufferizationMaterializeInDestination = 1,
     LinalgCopy = 2
   };
   /// The op to be used for copying the padded result to the original
   /// destination tensor.
-  CopyBackOp copyBackOp = CopyBackOp::BufferizationCopyTensor;
+  CopyBackOp copyBackOp = CopyBackOp::BufferizationMaterializeInDestination;
   LinalgPaddingOptions &setCopyBackOp(CopyBackOp op) {
     copyBackOp = op;
     return *this;
@@ -1174,6 +1174,14 @@ FailureOr<Operation *> rewriteInDestinationPassingStyle(RewriterBase &rewriter,
 /// the final operation of the sequence that replaces the original convolution.
 FailureOr<std::pair<Operation *, Operation *>>
 rewriteInIm2Col(RewriterBase &rewriter, linalg::Conv2DNhwcHwcfOp convOp);
+
+/// Same as the above but for Fhwc channel orderings in the filter. In this case
+/// the matrix multiplication is actually a row-wise dot-product rather than a
+/// row-column dot-product. This is to avoid transposing the filter matrix which
+/// would be required for a regular matrix multiplication to produce the correct
+/// output dimensions.
+FailureOr<std::pair<Operation *, Operation *>>
+rewriteInIm2Col(RewriterBase &rewriter, linalg::Conv2DNhwcFhwcOp convOp);
 
 /// Similar to rewriteInIm2Col with linalg::Conv2DNhwcHwcfOp except there is no
 /// reduction among the input channels so each convolution can be a

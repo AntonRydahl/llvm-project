@@ -85,11 +85,10 @@ void dragonfly::Linker::ConstructJob(Compilation &C, const JobAction &JA,
     CmdArgs.push_back("elf_i386");
   }
 
+  assert((Output.isFilename() || Output.isNothing()) && "Invalid output.");
   if (Output.isFilename()) {
     CmdArgs.push_back("-o");
     CmdArgs.push_back(Output.getFilename());
-  } else {
-    assert(Output.isNothing() && "Invalid output.");
   }
 
   if (!Args.hasArg(options::OPT_nostdlib, options::OPT_nostartfiles,
@@ -116,14 +115,15 @@ void dragonfly::Linker::ConstructJob(Compilation &C, const JobAction &JA,
           Args.MakeArgString(getToolChain().GetFilePath("crtbegin.o")));
   }
 
-  Args.AddAllArgs(CmdArgs,
-                  {options::OPT_L, options::OPT_T_Group});
+  Args.addAllArgs(CmdArgs, {options::OPT_L, options::OPT_T_Group});
 
   AddLinkerInputs(getToolChain(), Inputs, Args, CmdArgs, JA);
 
   if (!Args.hasArg(options::OPT_nostdlib, options::OPT_nodefaultlibs,
                    options::OPT_r)) {
-    CmdArgs.push_back("-L/usr/lib/gcc80");
+    SmallString<128> Dir(D.SysRoot);
+    llvm::sys::path::append(Dir, "/usr/lib/gcc80");
+    CmdArgs.push_back(Args.MakeArgString("-L" + Dir));
 
     if (!Args.hasArg(options::OPT_static)) {
       CmdArgs.push_back("-rpath");
@@ -192,8 +192,8 @@ DragonFly::DragonFly(const Driver &D, const llvm::Triple &Triple,
     getProgramPaths().push_back(getDriver().Dir);
 
   getFilePaths().push_back(getDriver().Dir + "/../lib");
-  getFilePaths().push_back("/usr/lib");
-  getFilePaths().push_back("/usr/lib/gcc80");
+  getFilePaths().push_back(concat(getDriver().SysRoot, "/usr/lib"));
+  getFilePaths().push_back(concat(getDriver().SysRoot, "/usr/lib/gcc80"));
 }
 
 void DragonFly::AddClangSystemIncludeArgs(
