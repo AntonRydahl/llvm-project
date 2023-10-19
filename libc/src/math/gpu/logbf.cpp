@@ -10,8 +10,8 @@
 #include "src/math/logbf.h"
 #include "src/__support/common.h"
 
-namespace __llvm_libc {
+namespace LIBC_NAMESPACE {
 
 LLVM_LIBC_FUNCTION(float, logbf, (float x)) { return __builtin_logbf(x); }
 
-} // namespace __llvm_libc
+} // namespace LIBC_NAMESPACE
