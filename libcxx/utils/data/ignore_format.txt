@@ -561,6 +561,16 @@ libcxx/test/libcxx/algorithms/alg.modifying.operations/alg.random.shuffle/random
 libcxx/test/libcxx/algorithms/alg.modifying.operations/copy_move_nontrivial.pass.cpp
 libcxx/test/libcxx/algorithms/alg.modifying.operations/copy_move_trivial.pass.cpp
 libcxx/test/libcxx/algorithms/alg.modifying.operations/copy_move_unwrap_reverse.pass.cpp
+libcxx/test/libcxx/algorithms/alg.pstl.offload/fill_offload.pass.cpp
+libcxx/test/libcxx/algorithms/alg.pstl.offload/find_if_offload.pass.cpp
+libcxx/test/libcxx/algorithms/alg.pstl.offload/find_if.pass.cpp
+libcxx/test/libcxx/algorithms/alg.pstl.offload/for_each_offload.pass.cpp
+libcxx/test/libcxx/algorithms/alg.pstl.offload/for_each_overwrite_input.pass.cpp
+libcxx/test/libcxx/algorithms/alg.pstl.offload/openmp_version_40.verify.cpp
+libcxx/test/libcxx/algorithms/alg.pstl.offload/openmp_version_45.verify.cpp
+libcxx/test/libcxx/algorithms/alg.pstl.offload/openmp_version_51.verify.cpp
+libcxx/test/libcxx/algorithms/alg.pstl.offload/transform_offload.pass.cpp
+libcxx/test/libcxx/algorithms/alg.pstl.offload/transform_reduce_offload.pass.cpp
 libcxx/test/libcxx/algorithms/alg.sorting/alg.heap.operations/make.heap/complexity.pass.cpp
 libcxx/test/libcxx/algorithms/alg.sorting/assert.min.max.pass.cpp
 libcxx/test/libcxx/algorithms/alg.sorting/assert.sort.invalid_comparator.pass.cpp
