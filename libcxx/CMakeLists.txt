@@ -296,10 +296,12 @@ option(LIBCXX_HAS_EXTERNAL_THREAD_API
    This option may only be set to ON when LIBCXX_ENABLE_THREADS=ON." OFF)
 
 if (LIBCXX_ENABLE_THREADS)
-  set(LIBCXX_PSTL_CPU_BACKEND "std_thread" CACHE STRING "Which PSTL CPU backend to use")
+  set(LIBCXX_PSTL_BACKEND_DEFAULT "std-thread")
 else()
-  set(LIBCXX_PSTL_CPU_BACKEND "serial" CACHE STRING "Which PSTL CPU backend to use")
+  set(LIBCXX_PSTL_BACKEND_DEFAULT "serial")
 endif()
+
+set(LIBCXX_PSTL_BACKEND "${LIBCXX_PSTL_BACKEND_DEFAULT}" CACHE STRING "Select the PSTL backend to use. Valid values are serial, std-thread, libdispatch, openmp. Default: ${LIBCXX_PSTL_BACKEND_DEFAULT}")
 
 # Misc options ----------------------------------------------------------------
 # FIXME: Turn -pedantic back ON. It is currently off because it warns
@@ -772,15 +774,19 @@ elseif (LIBCXX_HARDENING_MODE STREQUAL "unchecked")
   config_define(0 _LIBCPP_ENABLE_DEBUG_MODE_DEFAULT)
 endif()
 
-if (LIBCXX_PSTL_CPU_BACKEND STREQUAL "serial")
+if (LIBCXX_PSTL_BACKEND STREQUAL "serial")
   config_define(1 _LIBCPP_PSTL_CPU_BACKEND_SERIAL)
-elseif(LIBCXX_PSTL_CPU_BACKEND STREQUAL "std_thread")
+elseif (LIBCXX_PSTL_BACKEND STREQUAL "std-thread")
   config_define(1 _LIBCPP_PSTL_CPU_BACKEND_THREAD)
-elseif(LIBCXX_PSTL_CPU_BACKEND STREQUAL "libdispatch")
+elseif (LIBCXX_PSTL_BACKEND STREQUAL "libdispatch")
   config_define(1 _LIBCPP_PSTL_CPU_BACKEND_LIBDISPATCH)
+elseif (LIBCXX_PSTL_BACKEND STREQUAL "openmp")
+  config_define(1 _LIBCPP_PSTL_BACKEND_OPENMP)
+  # Making sure that OpenMP is enabled during build
+  add_compile_options(-fopenmp)
 else()
-  message(FATAL_ERROR "LIBCXX_PSTL_CPU_BACKEND is set to ${LIBCXX_PSTL_CPU_BACKEND}, which is not a valid backend.
-                       Valid backends are: serial, std_thread and libdispatch")
+  message(FATAL_ERROR "LIBCXX_PSTL_BACKEND is set to ${LIBCXX_PSTL_BACKEND}, which is not a valid backend.
+                       Valid backends are: serial, std-thread, libdispatch, and openmp.")
 endif()
 
 if (LIBCXX_ABI_DEFINES)

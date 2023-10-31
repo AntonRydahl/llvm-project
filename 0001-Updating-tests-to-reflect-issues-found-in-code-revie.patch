@@ -1,0 +1,680 @@
+From 26f282601ff67e51c38dac5dc8d0c034564acc2a Mon Sep 17 00:00:00 2001
+From: AntonRydahl <rydahl2610@gmail.com>
+Date: Mon, 30 Oct 2023 11:44:07 -0700
+Subject: [PATCH] Updating tests to reflect issues found in code review
+
+---
+ .../alg.pstl.offload/fill_offload.pass.cpp    |  37 ++--
+ .../alg.pstl.offload/find_if.pass.cpp         |  52 ++---
+ .../alg.pstl.offload/find_if_offload.pass.cpp |  14 +-
+ .../for_each_offload.pass.cpp                 |  16 +-
+ .../for_each_overwrite_input.pass.cpp         |  45 ++--
+ .../openmp_version_40.verify.cpp              |   2 +-
+ .../openmp_version_45.verify.cpp              |   2 +-
+ .../openmp_version_51.verify.cpp              |   2 +-
+ .../transform_offload.pass.cpp                |  36 ++--
+ .../transform_reduce_offload.pass.cpp         |  22 +-
+ ...educe_supported_binary_operations.pass.cpp | 203 ++++++++++++++++++
+ 11 files changed, 321 insertions(+), 110 deletions(-)
+ create mode 100644 libcxx/test/libcxx/algorithms/alg.pstl.offload/transform_reduce_supported_binary_operations.pass.cpp
+
+diff --git a/libcxx/test/libcxx/algorithms/alg.pstl.offload/fill_offload.pass.cpp b/libcxx/test/libcxx/algorithms/alg.pstl.offload/fill_offload.pass.cpp
+index bd143b632258..1557a667b81e 100644
+--- a/libcxx/test/libcxx/algorithms/alg.pstl.offload/fill_offload.pass.cpp
++++ b/libcxx/test/libcxx/algorithms/alg.pstl.offload/fill_offload.pass.cpp
+@@ -7,7 +7,8 @@
+ //===----------------------------------------------------------------------===//
+ 
+ // This test will fail if the number of devices detected by OpenMP is larger
+-// than zero but for_each is not executed on the device.
++// than zero but std::for_each(std::execution::par_unseq,...) is not executed on
++// the device.
+ 
+ // UNSUPPORTED: c++03, c++11, c++14, gcc
+ 
+@@ -27,15 +28,27 @@ int main(void) {
+     return 0;
+ 
+   // Initializing test array
+-  const int __test_size = 10000;
+-  std::vector<int> __v(__test_size);
+-  std::for_each(std::execution::par_unseq, __v.begin(), __v.end(), [](int& n) {
+-    // Returns true if executed on the host
+-    n = omp_is_initial_device();
+-  });
+-
+-  auto __idx = std::find_if(std::execution::par_unseq, __v.begin(), __v.end(), [](int& n) -> bool { return n > 0; });
+-  assert(__idx == __v.end() &&
+-         "omp_is_initial_device() returned true in the target region. std::for_each was not offloaded.");
++  const int test_size = 10000;
++  std::vector<int> v(test_size, 2);
++
++  // By making an extra map, we can control when the data is mapped to and from
++  // the device, because the map inside std::fill will then only increment and
++  // decrement reference counters and not move data.
++  int* data = v.data();
++#pragma omp target enter data map(to : data[0 : v.size()])
++  std::fill(std::execution::par_unseq, v.begin(), v.end(), -2);
++
++  // At this point v should only contain the value 2
++  for (int vi : v)
++    assert(vi == 2 &&
++           "std::fill transferred data from device to the host but should only have decreased the reference counter.");
++
++// After moving the result back to the host it should now be -2
++#pragma omp target update from(data[0 : v.size()])
++  for (int vi : v)
++    assert(vi == -2 && "std::fill did not update the result on the device.");
++
++#pragma omp target exit data map(delete : data[0 : v.size()])
++
+   return 0;
+-}
+\ No newline at end of file
++}
+diff --git a/libcxx/test/libcxx/algorithms/alg.pstl.offload/find_if.pass.cpp b/libcxx/test/libcxx/algorithms/alg.pstl.offload/find_if.pass.cpp
+index 6a61887a443d..d368701f5712 100644
+--- a/libcxx/test/libcxx/algorithms/alg.pstl.offload/find_if.pass.cpp
++++ b/libcxx/test/libcxx/algorithms/alg.pstl.offload/find_if.pass.cpp
+@@ -6,8 +6,9 @@
+ //
+ //===----------------------------------------------------------------------===//
+ 
+-// This test verifies that you can overwrite the input in std::for_each. If the
+-// result was not copied back from the device to the host, this test would fail.
++// This test verifies that std::find_if(std::execution::par_unseq,...) always
++// finds the first entry in a vector matching the condition. If it was confused
++// with std::any_of, it could return the indexes in a non-increasing order.
+ 
+ // UNSUPPORTED: c++03, c++11, c++14, gcc
+ 
+@@ -22,46 +23,47 @@
+ #include <vector>
+ 
+ template <class _Tp>
+-void check_find_if(_Tp& __data) {
+-  const int __len = __data.end() - __data.begin();
+-  // Setting all elements to two except for the indexes in __idx
+-  int __idx[11] = {
+-      0, __len / 10, __len / 9, __len / 8, __len / 7, __len / 6, __len / 5, __len / 4, __len / 3, __len / 2, __len - 1};
+-  std::fill(std::execution::par_unseq, __data.begin(), __data.end(), 2);
+-  for (auto __i : __idx) {
+-    __data[__i]--;
++void check_find_if(_Tp& data) {
++  const int len = data.end() - data.begin();
++  // Decrementing the values in the test indices
++  int idx[11] = {0, len / 10, len / 9, len / 8, len / 7, len / 6, len / 5, len / 4, len / 3, len / 2, len - 1};
++  for (auto i : idx) {
++    data[i] -= 1;
+   };
++
+   // Asserting that the minimas are found in the correct order
+-  for (auto __i : __idx) {
+-    auto __found_min = std::find_if(
+-        std::execution::par_unseq, __data.begin(), __data.end(), [&](decltype(__data[0])& n) -> bool { return n < 2; });
+-    assert(__found_min == (__data.begin() + __i));
++  for (auto i : idx) {
++    auto found_min = std::find_if(
++        std::execution::par_unseq, data.begin(), data.end(), [&](decltype(data[0])& n) -> bool { return n < 2; });
++    assert(found_min == (data.begin() + i));
+     // Incrementing the minimum, so the next one can be found
+-    (*__found_min)++;
++    (*found_min) += 1;
+   }
+ }
+ 
+ int main(void) {
+-  const int __test_size = 10000;
++  const int test_size = 10000;
+   // Testing with vector of doubles
+   {
+-    std::vector<double> __v(__test_size);
+-    check_find_if(__v);
++    std::vector<double> v(test_size, 2.0);
++    check_find_if(v);
+   }
+   // Testing with vector of integers
+   {
+-    std::vector<int> __v(__test_size);
+-    check_find_if(__v);
++    std::vector<int> v(test_size, 2);
++    check_find_if(v);
+   }
+   // Testing with array of doubles
+   {
+-    std::array<double, __test_size> __a;
+-    check_find_if(__a);
++    std::array<double, test_size> a;
++    a.fill(2.0);
++    check_find_if(a);
+   }
+   // Testing with array of integers
+   {
+-    std::array<int, __test_size> __a;
+-    check_find_if(__a);
++    std::array<int, test_size> a;
++    a.fill(2);
++    check_find_if(a);
+   }
+   return 0;
+-}
+\ No newline at end of file
++}
+diff --git a/libcxx/test/libcxx/algorithms/alg.pstl.offload/find_if_offload.pass.cpp b/libcxx/test/libcxx/algorithms/alg.pstl.offload/find_if_offload.pass.cpp
+index 4e91f52673c5..89a884de8098 100644
+--- a/libcxx/test/libcxx/algorithms/alg.pstl.offload/find_if_offload.pass.cpp
++++ b/libcxx/test/libcxx/algorithms/alg.pstl.offload/find_if_offload.pass.cpp
+@@ -7,7 +7,8 @@
+ //===----------------------------------------------------------------------===//
+ 
+ // This test will fail if the number of devices detected by OpenMP is larger
+-// than zero but find_if is not executed on the device.
++// than zero but syd::find_if(std::execution::par_unseq,...) is not executed on
++// the device.
+ 
+ // UNSUPPORTED: c++03, c++11, c++14, gcc
+ 
+@@ -27,15 +28,14 @@ int main(void) {
+     return 0;
+ 
+   // Initializing test array
+-  const int __test_size = 10000;
+-  std::vector<double> __v(__test_size);
+-  std::fill(std::execution::par_unseq, __v.begin(), __v.end(), 1.0);
++  const int test_size = 10000;
++  std::vector<double> v(test_size, 1);
+ 
+-  auto __idx = std::find_if(std::execution::par_unseq, __v.begin(), __v.end(), [](double&) -> bool {
++  auto idx = std::find_if(std::execution::par_unseq, v.begin(), v.end(), [](double&) -> bool {
+     // Returns true if executed on the host
+     return omp_is_initial_device();
+   });
+-  assert(__idx == __v.end() &&
++  assert(idx == v.end() &&
+          "omp_is_initial_device() returned true in the target region. std::find_if was not offloaded.");
+   return 0;
+-}
+\ No newline at end of file
++}
+diff --git a/libcxx/test/libcxx/algorithms/alg.pstl.offload/for_each_offload.pass.cpp b/libcxx/test/libcxx/algorithms/alg.pstl.offload/for_each_offload.pass.cpp
+index bd143b632258..6ee3310507c1 100644
+--- a/libcxx/test/libcxx/algorithms/alg.pstl.offload/for_each_offload.pass.cpp
++++ b/libcxx/test/libcxx/algorithms/alg.pstl.offload/for_each_offload.pass.cpp
+@@ -7,7 +7,8 @@
+ //===----------------------------------------------------------------------===//
+ 
+ // This test will fail if the number of devices detected by OpenMP is larger
+-// than zero but for_each is not executed on the device.
++// than zero but for_each(std::execution::par_unseq,...) is not executed on the
++// device.
+ 
+ // UNSUPPORTED: c++03, c++11, c++14, gcc
+ 
+@@ -27,15 +28,14 @@ int main(void) {
+     return 0;
+ 
+   // Initializing test array
+-  const int __test_size = 10000;
+-  std::vector<int> __v(__test_size);
+-  std::for_each(std::execution::par_unseq, __v.begin(), __v.end(), [](int& n) {
++  const int test_size = 10000;
++  std::vector<int> v(test_size);
++  std::for_each(std::execution::par_unseq, v.begin(), v.end(), [](int& n) {
+     // Returns true if executed on the host
+     n = omp_is_initial_device();
+   });
+ 
+-  auto __idx = std::find_if(std::execution::par_unseq, __v.begin(), __v.end(), [](int& n) -> bool { return n > 0; });
+-  assert(__idx == __v.end() &&
+-         "omp_is_initial_device() returned true in the target region. std::for_each was not offloaded.");
++  for (int vi : v)
++    assert(vi == 0 && "omp_is_initial_device() returned true in the target region. std::for_each was not offloaded.");
+   return 0;
+-}
+\ No newline at end of file
++}
+diff --git a/libcxx/test/libcxx/algorithms/alg.pstl.offload/for_each_overwrite_input.pass.cpp b/libcxx/test/libcxx/algorithms/alg.pstl.offload/for_each_overwrite_input.pass.cpp
+index 4f60b8dcc788..a39aa2cf2977 100644
+--- a/libcxx/test/libcxx/algorithms/alg.pstl.offload/for_each_overwrite_input.pass.cpp
++++ b/libcxx/test/libcxx/algorithms/alg.pstl.offload/for_each_overwrite_input.pass.cpp
+@@ -6,8 +6,9 @@
+ //
+ //===----------------------------------------------------------------------===//
+ 
+-// This test verifies that you can overwrite the input in std::for_each. If the
+-// result was not copied back from the device to the host, this test would fail.
++// This test verifies that you can overwrite the input in
++// std::for_each(std::execution::par_unseq,...). If the result was not copied
++// back from the device to the host, this test would fail.
+ 
+ // UNSUPPORTED: c++03, c++11, c++14, gcc
+ 
+@@ -22,43 +23,43 @@
+ #include <vector>
+ 
+ template <class _Tp, class _Predicate, class _Up>
+-void overwrite(_Tp& __data, _Predicate __pred, const _Up& __value) {
+-  // This function assumes that __pred will never be the identity transformation
+-  // Filling array with __value
+-  std::fill(std::execution::par_unseq, __data.begin(), __data.end(), __value);
++void overwrite(_Tp& data, _Predicate pred, const _Up& value) {
++  // This function assumes that pred will never be the identity transformation
+ 
+   // Updating the array with a lambda
+-  std::for_each(std::execution::par_unseq, __data.begin(), __data.end(), __pred);
++  std::for_each(std::execution::par_unseq, data.begin(), data.end(), pred);
+ 
+   // Asserting that no elements have the intial value
+-  auto __idx = std::find_if(
+-      std::execution::par_unseq, __data.begin(), __data.end(), [&, __value](decltype(__data[0])& n) -> bool {
+-        return n == __value;
+-      });
+-  assert(__idx == __data.end());
++  for (int di : data)
++    assert(
++        di != value &&
++        "The GPU implementation of std::for_each does not allow users to mutate the input as the C++ standard does.");
+ }
+ 
+ int main(void) {
+-  const int __test_size = 10000;
++  const double value  = 2.0;
++  const int test_size = 10000;
+   // Testing with vector of doubles
+   {
+-    std::vector<double> __v(__test_size);
+-    overwrite(__v, [&](double& __n) { __n *= __n; }, 2.0);
++    std::vector<double> v(test_size, value);
++    overwrite(v, [&](double& n) { n *= n; }, value);
+   }
+   // Testing with vector of integers
+   {
+-    std::vector<int> __v(__test_size);
+-    overwrite(__v, [&](int& __n) { __n *= __n; }, 2);
++    std::vector<int> v(test_size, (int)value);
++    overwrite(v, [&](int& n) { n *= n; }, (int)value);
+   }
+   // Testing with array of doubles
+   {
+-    std::array<double, __test_size> __a;
+-    overwrite(__a, [&](double& __n) { __n *= __n; }, 2.0);
++    std::array<double, test_size> a;
++    a.fill(value);
++    overwrite(a, [&](double& n) { n *= n; }, value);
+   }
+   // Testing with array of integers
+   {
+-    std::array<int, __test_size> __a;
+-    overwrite(__a, [&](int& __n) { __n *= __n; }, 2);
++    std::array<int, test_size> a;
++    a.fill((int)value);
++    overwrite(a, [&](int& n) { n *= n; }, (int)value);
+   }
+   return 0;
+-}
+\ No newline at end of file
++}
+diff --git a/libcxx/test/libcxx/algorithms/alg.pstl.offload/openmp_version_40.verify.cpp b/libcxx/test/libcxx/algorithms/alg.pstl.offload/openmp_version_40.verify.cpp
+index ec6d567d6722..77836d47b081 100644
+--- a/libcxx/test/libcxx/algorithms/alg.pstl.offload/openmp_version_40.verify.cpp
++++ b/libcxx/test/libcxx/algorithms/alg.pstl.offload/openmp_version_40.verify.cpp
+@@ -18,4 +18,4 @@
+ 
+ #include <algorithm>
+ 
+-// expected-error@__algorithm/pstl_backends/openmp/backend.h:26 {{"OpenMP target offloading has been supported since OpenMP version 4.5 (201511). Please use a more recent version of OpenMP."}}
+\ No newline at end of file
++// expected-error@__algorithm/pstl_backends/openmp/backend.h:26 {{"OpenMP target offloading has been supported since OpenMP version 4.5 (201511). Please use a more recent version of OpenMP."}}
+diff --git a/libcxx/test/libcxx/algorithms/alg.pstl.offload/openmp_version_45.verify.cpp b/libcxx/test/libcxx/algorithms/alg.pstl.offload/openmp_version_45.verify.cpp
+index 881f0ee16e0a..ff0bf1cf67c8 100644
+--- a/libcxx/test/libcxx/algorithms/alg.pstl.offload/openmp_version_45.verify.cpp
++++ b/libcxx/test/libcxx/algorithms/alg.pstl.offload/openmp_version_45.verify.cpp
+@@ -18,4 +18,4 @@
+ 
+ #include <algorithm>
+ 
+-// expected-no-diagnostics
+\ No newline at end of file
++// expected-no-diagnostics
+diff --git a/libcxx/test/libcxx/algorithms/alg.pstl.offload/openmp_version_51.verify.cpp b/libcxx/test/libcxx/algorithms/alg.pstl.offload/openmp_version_51.verify.cpp
+index d9a0242606bd..401285586cae 100644
+--- a/libcxx/test/libcxx/algorithms/alg.pstl.offload/openmp_version_51.verify.cpp
++++ b/libcxx/test/libcxx/algorithms/alg.pstl.offload/openmp_version_51.verify.cpp
+@@ -18,4 +18,4 @@
+ 
+ #include <algorithm>
+ 
+-// expected-no-diagnostics
+\ No newline at end of file
++// expected-no-diagnostics
+diff --git a/libcxx/test/libcxx/algorithms/alg.pstl.offload/transform_offload.pass.cpp b/libcxx/test/libcxx/algorithms/alg.pstl.offload/transform_offload.pass.cpp
+index 755c1054b469..d813a8828fc5 100644
+--- a/libcxx/test/libcxx/algorithms/alg.pstl.offload/transform_offload.pass.cpp
++++ b/libcxx/test/libcxx/algorithms/alg.pstl.offload/transform_offload.pass.cpp
+@@ -7,7 +7,8 @@
+ //===----------------------------------------------------------------------===//
+ 
+ // This test will fail if the number of devices detected by OpenMP is larger
+-// than zero but transform is not executed on the device.
++// than zero but std::transform(std::execution::par_unseq,...) is not executed
++// on the device.
+ 
+ // UNSUPPORTED: c++03, c++11, c++14, gcc
+ 
+@@ -26,38 +27,31 @@ int main(void) {
+   if (omp_get_num_devices() < 1)
+     return 0;
+ 
+-  // Initializing test array
+-  const int __test_size = 10000;
+-  std::vector<int> __host(__test_size);
+-  std::vector<int> __device(__test_size);
++  // Initializing test arrays
++  const int test_size = 10000;
++  std::vector<int> host(test_size);
++  std::vector<int> device(test_size);
+   // Should execute on host
+-  std::transform(std::execution::unseq, __host.begin(), __host.end(), __host.begin(), [](int& h) {
++  std::transform(std::execution::unseq, host.begin(), host.end(), host.begin(), [](int& h) {
+     // Returns true if executed on the host
+     h = omp_is_initial_device();
+     return h;
+   });
+ 
+-  // Finding first index where omp_is_initial_device() returned true
+-  auto __idx = std::find_if(std::execution::par_unseq, __host.begin(), __host.end(), [](int& n) -> bool { return n; });
+-  assert(__idx == __host.begin() &&
+-         "omp_is_initial_device() returned false. std::transform was offloaded but shouldn't be.");
++  // Asserting the std::transform(std::execution::unseq,...) executed on the host
++  for (int hi : host)
++    assert(hi && "omp_is_initial_device() returned false. std::transform was offloaded but shouldn't be.");
+ 
+   // Should execute on device
+   std::transform(
+-      std::execution::par_unseq,
+-      __device.begin(),
+-      __device.end(),
+-      __host.begin(),
+-      __device.begin(),
+-      [](int& d, int& h) {
++      std::execution::par_unseq, device.begin(), device.end(), host.begin(), device.begin(), [](int& d, int& h) {
+         // Should return fals
+         d = omp_is_initial_device();
+         return h == d;
+       });
+ 
+-  // Finding first index where omp_is_initial_device() returned true
+-  __idx = std::find_if(std::execution::par_unseq, __device.begin(), __device.end(), [](int& n) -> bool { return n; });
+-  assert(__idx == __device.end() &&
+-         "omp_is_initial_device() returned true in the target region. std::transform was not offloaded.");
++  // Asserting the std::transform(std::execution::par_unseq,...) executed on the device
++  for (int di : device)
++    assert(!di && "omp_is_initial_device() returned true in the target region. std::transform was not offloaded.");
+   return 0;
+-}
+\ No newline at end of file
++}
+diff --git a/libcxx/test/libcxx/algorithms/alg.pstl.offload/transform_reduce_offload.pass.cpp b/libcxx/test/libcxx/algorithms/alg.pstl.offload/transform_reduce_offload.pass.cpp
+index 072f0ffbaf9e..20acd2be45f8 100644
+--- a/libcxx/test/libcxx/algorithms/alg.pstl.offload/transform_reduce_offload.pass.cpp
++++ b/libcxx/test/libcxx/algorithms/alg.pstl.offload/transform_reduce_offload.pass.cpp
+@@ -7,7 +7,8 @@
+ //===----------------------------------------------------------------------===//
+ 
+ // This test will fail if the number of devices detected by OpenMP is larger
+-// than zero but transform_reduce is not executed on the device.
++// than zero but std::transform_reduce(std::execution::par_unseq,...) is not
++// executed on the device.
+ 
+ // UNSUPPORTED: c++03, c++11, c++14, gcc
+ 
+@@ -18,9 +19,9 @@
+ #include <algorithm>
+ #include <cassert>
+ #include <execution>
++#include <functional>
+ #include <vector>
+ #include <omp.h>
+-#include <functional>
+ 
+ int main(void) {
+   // We only run the test if a device is detected by OpenMP
+@@ -28,18 +29,15 @@ int main(void) {
+     return 0;
+ 
+   // Initializing test array
+-  const int __test_size = 10000;
+-  std::vector<int> __v(__test_size);
+-  std::vector<int> __w(__test_size);
+-  std::for_each(std::execution::par_unseq, __v.begin(), __v.end(), [](int& n) { n = !omp_is_initial_device(); });
+-
+-  std::for_each(std::execution::par_unseq, __w.begin(), __w.end(), [](int& n) { n = !omp_is_initial_device(); });
++  const int test_size = 10000;
++  std::vector<int> v(test_size, 1);
++  std::vector<int> w(test_size, 1);
+ 
+   int result = std::transform_reduce(
+-      std::execution::par_unseq, __v.begin(), __v.end(), __w.begin(), (int)0, std::plus{}, [](int& n, int& m) {
+-        return n + m + omp_is_initial_device();
++      std::execution::par_unseq, v.begin(), v.end(), w.begin(), (int)0, std::plus{}, [](int& n, int& m) {
++        return n + m + omp_is_initial_device(); // Gives 2 if executed on device, 3 if executed on host
+       });
+-  assert(result == 2 * __test_size &&
++  assert(result == 2 * test_size &&
+          "omp_is_initial_device() returned true in the target region. std::transform_reduce was not offloaded.");
+   return 0;
+-}
+\ No newline at end of file
++}
+diff --git a/libcxx/test/libcxx/algorithms/alg.pstl.offload/transform_reduce_supported_binary_operations.pass.cpp b/libcxx/test/libcxx/algorithms/alg.pstl.offload/transform_reduce_supported_binary_operations.pass.cpp
+new file mode 100644
+index 000000000000..e4b2b5a17aac
+--- /dev/null
++++ b/libcxx/test/libcxx/algorithms/alg.pstl.offload/transform_reduce_supported_binary_operations.pass.cpp
+@@ -0,0 +1,203 @@
++//===----------------------------------------------------------------------===//
++//
++// Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
++// See https://llvm.org/LICENSE.txt for license information.
++// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
++//
++//===----------------------------------------------------------------------===//
++
++// This test verifies that std::transform_reduce(std::execution::par_unseq,...)
++// can be offloaded for a number of supported binary operations. The following
++// binary operations should be supported for the reducer:
++// - std::plus
++// - std::minus
++// - std::multiplies
++// - std::logical_and
++// - std::logical_or
++// - std::bit_and
++// - std::bit_or
++// - std::bit_xor
++
++// UNSUPPORTED: c++03, c++11, c++14, gcc
++
++// ADDITIONAL_COMPILE_FLAGS: -O2 -Wno-pass-failed -fopenmp
++
++// REQUIRES: openmp_pstl_backend
++
++#include <algorithm>
++#include <cassert>
++#include <cmath>
++#include <execution>
++#include <functional>
++#include <vector>
++#include <omp.h>
++#include <iostream>
++
++int main(void) {
++  // We only run the test if a device is detected by OpenMP
++  if (omp_get_num_devices() < 1)
++    return 0;
++
++  // Initializing test array
++  const int test_size = 10000;
++
++  //===--------------------------------------------------------------------===//
++  // Arithmetic binary operators
++  //===--------------------------------------------------------------------===//
++
++  // Addition with doubles
++  {
++    std::vector<double> v(test_size, 1.0);
++    std::vector<double> w(test_size, 2.0);
++    double result = std::transform_reduce(
++        std::execution::par_unseq, v.begin(), v.end(), w.begin(), 5.0, std::plus{}, [](double& a, double& b) {
++          return 0.5 * (b - a) * ((double)!omp_is_initial_device());
++        });
++    assert((std::abs(result - 0.5 * ((double)test_size)-5.0) < 1e-8) &&
++           "std::transform_reduce(std::execution::par_unseq,...) does not have the intended effect for the binary "
++           "operation std::plus.");
++  }
++
++  // Subtraction of floats
++  {
++    std::vector<float> v(test_size, 1.0f);
++    std::vector<float> w(test_size, 1.5f);
++    float result = std::transform_reduce(
++        std::execution::par_unseq,
++        v.begin(),
++        v.end(),
++        w.begin(),
++        1.25 * ((float)test_size),
++        std::minus{},
++        [](float& a, float& b) { return 0.5 * (a + b) * ((float)!omp_is_initial_device()); });
++    assert((std::abs(result) < 1e-8f) && "std::transform_reduce(std::execution::par_unseq,...) does not have the "
++                                         "intended effect for the binary operation std::minus.");
++  }
++
++  // Multiplication of doubles
++  {
++    std::vector<double> v(test_size, 1.0);
++    std::vector<double> w(test_size, 0.0001);
++    double result = std::transform_reduce(
++        std::execution::par_unseq, v.begin(), v.end(), w.begin(), -1.0, std::multiplies{}, [](double& a, double& b) {
++          return (a + b) * ((double)!omp_is_initial_device());
++        });
++    assert((std::abs(result + pow(1.0001,test_size)) < 1e-8) &&
++           "std::transform_reduce(std::execution::par_unseq,...) does not have the intended effect for the binary "
++           "operation std::multiplies.");
++  }
++
++  //===--------------------------------------------------------------------===//
++  // Logical binary operators
++  //===--------------------------------------------------------------------===//
++
++  // Logical and
++  {
++    std::vector<int> v(test_size, 1);
++    // The result should be true with an initial value of 1
++    int result = std::transform_reduce(
++        std::execution::par_unseq, v.begin(), v.end(), 1, std::logical_and{}, [](int& a) {
++          return a && !omp_is_initial_device();
++        });
++    assert(result &&
++           "std::transform_reduce(std::execution::par_unseq,...) does not have the intended effect for the binary "
++           "operation std::logical_and.");
++    
++    // And false by an initial value of 0
++    result = std::transform_reduce(
++        std::execution::par_unseq, v.begin(), v.end(), 0, std::logical_and{}, [](int& a) {
++          return a && !omp_is_initial_device();
++        });
++    assert(!result &&
++           "std::transform_reduce(std::execution::par_unseq,...) does not have the intended effect for the binary "
++           "operation std::logical_and.");
++  }
++
++  // Logical or
++  {
++    std::vector<int> v(test_size, 0);
++    // The result should be true with an initial value of 1
++    int result = std::transform_reduce(
++        std::execution::par_unseq, v.begin(), v.end(), 1, std::logical_or{}, [](int& a) {
++          return a && !omp_is_initial_device();
++        });
++    assert(result &&
++           "std::transform_reduce(std::execution::par_unseq,...) does not have the intended effect for the binary "
++           "operation std::logical_or.");
++    
++    // And false by an initial value of 0
++    result = std::transform_reduce(
++        std::execution::par_unseq, v.begin(), v.end(), 0, std::logical_or{}, [](int& a) {
++          return a && !omp_is_initial_device();
++        });
++    assert(!result &&
++           "std::transform_reduce(std::execution::par_unseq,...) does not have the intended effect for the binary operation std::logical_or.");
++  }
++
++  //===--------------------------------------------------------------------===//
++  // Birwise binary operators
++  //===--------------------------------------------------------------------===//
++
++  // Bitwise and
++  {
++    std::vector<unsigned int> v(test_size, 3);
++    std::vector<unsigned int> w(test_size, 2);
++    // For odd numbers the result should be true
++    int result = std::transform_reduce(
++        std::execution::par_unseq, v.begin(), v.end(), 0x1, std::bit_and{}, [](unsigned int& a) {
++          return a + omp_is_initial_device();
++        });
++    assert(result &&
++           "std::transform_reduce(std::execution::par_unseq,...) does not have the intended effect for the binary operation std::bit_and.");
++
++    // For even numbers the result should be false
++    result = std::transform_reduce(
++        std::execution::par_unseq, w.begin(), w.end(), 0x1, std::bit_and{}, [](unsigned int& a) {
++          return a + omp_is_initial_device();
++        });
++    assert(!result &&
++           "std::transform_reduce(std::execution::par_unseq,...) does not have the intended effect for the binary operation std::bit_and.");
++  }
++
++  // Bitwise or
++  {
++    std::vector<unsigned int> v(test_size, 0);
++    int result = std::transform_reduce(
++        std::execution::par_unseq, v.begin(), v.end(), 0, std::bit_or{}, [](unsigned int& a) {
++          return a || omp_is_initial_device();
++        });
++    assert(!result &&
++           "std::transform_reduce(std::execution::par_unseq,...) does not have the intended effect for the binary operation std::bit_or.");
++
++    // After adding a one, the result should be true
++    v[v.size()/2] = 1;
++    result = std::transform_reduce(
++        std::execution::par_unseq, v.begin(), v.end(), 0, std::bit_or{}, [](unsigned int& a) {
++          return a && !omp_is_initial_device();
++        });
++    assert(result &&
++           "std::transform_reduce(std::execution::par_unseq,...) does not have the intended effect for the binary operation std::bit_or.");
++  }
++
++  // Bitwise xor
++  {
++    std::vector<unsigned int> v(test_size, 0xef);
++    int result = std::transform_reduce(
++        std::execution::par_unseq, v.begin(), v.end(), 0, std::bit_xor{}, [](unsigned int& a) {
++          return a << omp_is_initial_device();
++        });
++    assert(result == 0 &&
++           "std::transform_reduce(std::execution::par_unseq,...) does not have the intended effect for the binary operation std::bit_or.");
++
++    // After adding a one, the result should be true
++    v[v.size()/2] = 0xea;
++    result = std::transform_reduce(
++        std::execution::par_unseq, v.begin(), v.end(), 0, std::bit_xor{}, [](unsigned int& a) {
++          return a << omp_is_initial_device();
++        });
++    assert(result == 5 &&
++           "std::transform_reduce(std::execution::par_unseq,...) does not have the intended effect for the binary operation std::bit_or.");
++  }
++
++  return 0;
++}
+-- 
+2.29.1
+
