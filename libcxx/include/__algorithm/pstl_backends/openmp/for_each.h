@@ -48,7 +48,7 @@ __pstl_for_each(__omp_backend_tag, _ForwardIterator __first, _ForwardIterator __
                 __libcpp_is_contiguous_iterator<_ForwardIterator>::value &&
                 __libcpp_is_contiguous_iterator<_ForwardIterator>::value &&
                 is_trivially_copyable_v<remove_pointer_t<decltype(std::__unwrap_iter(__first))> >) {
-    std::__omp_for_each(std::__unwrap_iter(__first), __last - __first, __func);
+    std::__omp_for_each(std::__unwrap_iter(__first), __last - __first, __par_backend::__omp_get_device_ptr(__func));
     return __empty{};
   }
   // Else we fall back to the serial backend
